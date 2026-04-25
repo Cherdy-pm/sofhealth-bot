@@ -1,373 +1,67 @@
-import { useState } from "react";
+🏗️ System Architecture: SOFHealth Clinical AI
+Project: @SOFHealth_bot (v1.1)
 
-const nodes = {
-  // ── USER INPUTS ──
-  camera: { id:"camera", label:"📷 Camera / Photo", sublabel:"Prescription or drug packaging", layer:"input", x:60, y:120, color:"#0EA5E9", desc:"High-resolution native camera capture. Overlay guides correct framing. Supports printed and handwritten prescriptions. Max resolution preserved — no Telegram compression." },
-  voice: { id:"voice", label:"🎙 Voice Note", sublabel:"Hands-free clinical query", layer:"input", x:60, y:240, color:"#0EA5E9", desc:"Native microphone input. Hands-free operation for sterile clinical environments. Supports conversational queries like 'Is this safe for a patient with kidney disease?'" },
-  text: { id:"text", label:"⌨️ Text Query", sublabel:"Direct drug name search", layer:"input", x:60, y:360, color:"#0EA5E9", desc:"Standard chat input. Drug names, brand names, generic names. Most accessible entry point. Free tier users are limited to this modality." },
+Lead Architect: Obafemi Shedrach
 
-  // ── APP LAYER ──
-  app: { id:"app", label:"📱 SOFHealth App", sublabel:"React Native iOS + Android", layer:"app", x:280, y:240, color:"#6366F1", desc:"React Native application. Biometric authentication (FaceID / Fingerprint). Encrypted local session. Sends compressed, encrypted payload to API gateway. Streaming response display — first tokens visible in under 1 second." },
+Date: April 25, 2026
 
-  // ── GATEWAY ──
-  gateway: { id:"gateway", label:"🔐 API Gateway", sublabel:"Auth · Rate limit · Routing · Audit log", layer:"gateway", x:500, y:240, color:"#8B5CF6", desc:"Single entry point for all requests. JWT token validation. Rate limiting per user tier. Full audit logging (required for NDPR). Routes to appropriate processing pipeline. TLS 1.3 in transit." },
+1. High-Level Overview
+The architecture follows a Decoupled Multimodal Pattern. It separates the user interface (Telegram/App) from the processing logic (n8n/AI Engine) to ensure that we can swap the backend or frontend without breaking the entire system.
 
-  // ── PROCESSING ──
-  ocr: { id:"ocr", label:"👁 OCR Engine", sublabel:"Google Vision / AWS Textract", layer:"processing", x:700, y:100, color:"#F59E0B", desc:"Optical Character Recognition. Handles printed AND handwritten text. Pre-processing: deskew, contrast normalise, binarise. Confidence score returned — if < 80%, app prompts retake. Target: < 1.5s." },
-  stt: { id:"stt", label:"🗣 Speech-to-Text", sublabel:"OpenAI Whisper", layer:"processing", x:700, y:220, color:"#F59E0B", desc:"OpenAI Whisper model. Strong performance on Nigerian English and medical terminology. Runs server-side. Transcription of 10s voice note completes in < 2s. Output passed to NLP parser." },
-  nlp: { id:"nlp", label:"🧠 NLP Drug Parser", sublabel:"Named Entity Recognition", layer:"processing", x:700, y:340, color:"#F59E0B", desc:"Custom NER model (spaCy + scispaCy biomedical). Extracts: drug names (generic + brand), dosage values, units, frequency, route of admin, patient parameters. Normalises to RxNorm concept codes. Target: < 0.5s." },
+2. Layered Architecture
+A. Presentation Layer (Frontend)
+Telegram Bot API: Current primary interface for voice, image, and text input.
 
-  // ── CLINICAL ENGINE ──
-  engine: { id:"engine", label:"⚕️ Clinical Intelligence Engine", sublabel:"AI Synthesis · Veracity Scoring", layer:"engine", x:920, y:220, color:"#10B981", desc:"Core of the product. Takes structured drug query object from NLP parser. Fires parallel API calls to all databases. LLM synthesises structured response from retrieved data ONLY — no hallucination permitted. Calculates Veracity Score. Returns: Drug ID, Interactions, Dosage Assessment, Clinical Flags, Data Source citation." },
+Web Form (n8n): External entry point for user registration and whitelisting.
 
-  // ── DATABASES ──
-  openfda: { id:"openfda", label:"🏛 OpenFDA API", sublabel:"Drug labels · Adverse events · Recalls", layer:"database", x:1140, y:80, color:"#EF4444", desc:"US FDA drug database. Free. REST API. 120,000 requests/day with API key. Covers drug labels, adverse event reports, recall notices, indications and contraindications. Most reliable free source." },
-  rxnorm: { id:"rxnorm", label:"💊 RxNorm (NLM)", sublabel:"Drug names · Brand/generic mapping", layer:"database", x:1140, y:190, color:"#EF4444", desc:"National Library of Medicine. Standardised drug nomenclature. Maps brand names to generic names and vice versa. Concept codes ensure consistent cross-database querying. Free with no rate limit — cache aggressively." },
-  ddi: { id:"ddi", label:"⚠️ DDI Database", sublabel:"DrugBank / Lexicomp · Interactions", layer:"database", x:1140, y:300, color:"#EF4444", desc:"Drug-Drug Interaction engine. Paid license ($500–2,000/month). Lexicomp or DrugBank. Cross-references all identified drugs and flags: Contraindications, Synergistic effects, Antagonism, Toxicity risk levels. The most powerful clinical differentiator." },
-  nafdac: { id:"nafdac", label:"🇳🇬 NAFDAC / WHO", sublabel:"Local drug registry · Essential meds", layer:"database", x:1140, y:410, color:"#EF4444", desc:"NAFDAC registered drugs database (Nigerian-specific). WHO Essential Medicines list. Critical for market credibility in Nigeria and West Africa. NAFDAC data requires partnership request or scraping. WHO data is freely available." },
+Future Native App: iOS/Android interface using high-resolution camera modules.
 
-  // ── DATA LAYER ──
-  postgres: { id:"postgres", label:"🗄 PostgreSQL", sublabel:"User data · Audit logs", layer:"data", x:920, y:440, color:"#06B6D4", desc:"Primary relational database. Stores: user accounts, subscription status, audit trail (required for NDPR), professional verification records. Encrypted at rest (AES-256). Never stores prescription images long-term." },
-  redis: { id:"redis", label:"⚡ Redis Cache", sublabel:"Frequent queries · Sub-50ms hits", layer:"data", x:700, y:460, color:"#06B6D4", desc:"In-memory cache. Stores results for most-queried drugs. Cache hit rate target: 40–60% of queries. Reduces API costs dramatically and brings common queries below 1s. TTL: 24 hours for drug data (refreshed on database updates)." },
-  s3: { id:"s3", label:"🔒 Encrypted Storage", sublabel:"Prescription images · 24h TTL", layer:"data", x:500, y:460, color:"#06B6D4", desc:"S3-compatible encrypted object storage. Prescription photos stored only for duration of query processing + 24-hour audit window. Auto-deleted after TTL expires. AES-256 encryption. Never linked to patient identifiers in storage." },
+B. Orchestration & Logic Layer (Middleware)
+n8n Workflow Engine: The "Brain" that manages the sequence of events.
 
-  // ── COMPLIANCE ──
-  compliance: { id:"compliance", label:"🛡 Compliance Layer", sublabel:"NDPR · Encryption · PII detection", layer:"compliance", x:280, y:460, color:"#64748B", desc:"Wraps entire system. Responsibilities: TLS 1.3 encryption in transit, AES-256 at rest, automatic PII detection on all query text (strips before logging), NDPR audit trail, data residency enforcement (AWS af-south-1 / Lagos), session-based data retention, right-to-erasure workflow." },
+Input Router: Detects if the incoming data is a .jpg (Image), .ogg (Voice), or string (Text).
 
-  // ── OUTPUT ──
-  output: { id:"output", label:"✅ Clinical Response", sublabel:"< 5 seconds · Cited · Scored", layer:"output", x:280, y:100, color:"#22C55E", desc:"Structured clinical response delivered to app via streaming. Contains: Drug Identification (brand + generic), Interactions Found (with severity), Dosage Assessment (against therapeutic window), Clinical Flags (patient-specific contraindications), Veracity Score (0–100%), Data Source citation, Mandatory clinical disclaimer." },
-};
+Wait Controller: Manages the 1-hour delay for onboarding emails.
 
-const edges = [
-  // inputs to app
-  {from:"camera",to:"app"},{from:"voice",to:"app"},{from:"text",to:"app"},
-  // app to gateway
-  {from:"app",to:"gateway"},
-  // gateway to processing
-  {from:"gateway",to:"ocr"},{from:"gateway",to:"stt"},{from:"gateway",to:"nlp"},
-  // processing to engine
-  {from:"ocr",to:"engine"},{from:"stt",to:"engine"},{from:"nlp",to:"engine"},
-  // engine to databases
-  {from:"engine",to:"openfda"},{from:"engine",to:"rxnorm"},{from:"engine",to:"ddi"},{from:"engine",to:"nafdac"},
-  // engine to data layer
-  {from:"engine",to:"postgres"},
-  // redis to engine (cache lookup)
-  {from:"redis",to:"engine"},
-  // s3 to compliance
-  {from:"s3",to:"compliance"},
-  // gateway to s3
-  {from:"gateway",to:"s3"},
-  // gateway to redis
-  {from:"gateway",to:"redis"},
-  // engine to output
-  {from:"engine",to:"output"},
-  // output to app
-  {from:"output",to:"app"},
-  // compliance wraps
-  {from:"compliance",to:"gateway"},
-];
+Auth Gate: Checks the incoming Telegram ID against the "Verified Professionals" list.
 
-const LAYER_LABELS = {
-  input: { label:"INPUT LAYER", color:"#0EA5E9", desc:"User interaction — 3 modalities" },
-  app: { label:"CLIENT LAYER", color:"#6366F1", desc:"React Native mobile app" },
-  gateway: { label:"API GATEWAY", color:"#8B5CF6", desc:"Security · Auth · Routing" },
-  processing: { label:"PROCESSING PIPELINE", color:"#F59E0B", desc:"Parallel OCR + STT + NLP" },
-  engine: { label:"CLINICAL ENGINE", color:"#10B981", desc:"AI synthesis · Veracity" },
-  database: { label:"DATA SOURCES", color:"#EF4444", desc:"Validated clinical databases" },
-  data: { label:"STORAGE LAYER", color:"#06B6D4", desc:"Cache · Persistence · Compliance" },
-  compliance: { label:"COMPLIANCE LAYER", color:"#64748B", desc:"NDPR · Encryption · Audit" },
-  output: { label:"RESPONSE", color:"#22C55E", desc:"< 5s cited clinical answer" },
-};
+C. Cognitive Layer (AI & Analysis)
+OCR Engine: Extracting text from prescription photos.
 
-const W = 1400, H = 600;
-const NW = 155, NH = 52;
+Speech-to-Text (STT): Converting clinical voice notes into structured data.
 
-function getCenter(node) {
-  return { cx: node.x + NW/2, cy: node.y + NH/2 };
-}
+Clinical Reasoning Engine: Large Language Model (LLM) tuned for pharmacology to check interactions and veracity.
 
-export default function SOFHealthMap() {
-  const [active, setActive] = useState(null);
-  const [hoveredLayer, setHoveredLayer] = useState(null);
-  const activeNode = active ? nodes[active] : null;
+D. Data Layer (Persistence)
+Airtable: Relational database for tester profiles, waitlist management, and activity logging.
 
-  // Compute SVG viewBox from node positions
-  const allX = Object.values(nodes).map(n => n.x);
-  const allY = Object.values(nodes).map(n => n.y);
-  const minX = Math.min(...allX) - 20;
-  const minY = Math.min(...allY) - 20;
-  const maxX = Math.max(...allX) + NW + 20;
-  const maxY = Math.max(...allY) + NH + 40;
+Clinical Knowledge Base: External APIs (future) or internal reference files used for drug-drug interaction (DDI) checks.
 
-  return (
-    <div style={{
-      minHeight: "100vh",
-      background: "linear-gradient(135deg, #0A0F1E 0%, #0F172A 50%, #0A0F1E 100%)",
-      fontFamily: "'IBM Plex Mono', 'Courier New', monospace",
-      color: "#E2E8F0",
-      padding: "0",
-      position: "relative",
-      overflow: "hidden",
-    }}>
-      {/* Grid background */}
-      <div style={{
-        position:"absolute",inset:0,
-        backgroundImage:"linear-gradient(rgba(99,102,241,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.07) 1px, transparent 1px)",
-        backgroundSize:"40px 40px",
-        pointerEvents:"none",
-      }} />
+3. Data Flow Diagram (The Lifecycle of a Query)
+Ingestion: User sends a voice note to @SOFHealth_bot.
 
-      {/* Header */}
-      <div style={{ padding:"28px 40px 12px", borderBottom:"1px solid rgba(99,102,241,0.3)", position:"relative" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:"16px" }}>
-          <div style={{
-            width:44, height:44,
-            background:"linear-gradient(135deg, #6366F1, #10B981)",
-            borderRadius:10,
-            display:"flex", alignItems:"center", justifyContent:"center",
-            fontSize:22,
-          }}>⚕️</div>
-          <div>
-            <div style={{ fontSize:22, fontWeight:700, letterSpacing:"-0.5px", color:"#F1F5F9" }}>
-              SOFHealth — Full System Architecture
-            </div>
-            <div style={{ fontSize:12, color:"#64748B", marginTop:2, letterSpacing:"0.05em" }}>
-              CLICK ANY NODE TO EXPLORE · PHOTO-TO-CLINICAL-ANALYSIS PIPELINE · TARGET: &lt;5 SECONDS
-            </div>
-          </div>
-        </div>
-        {/* Layer legend */}
-        <div style={{ display:"flex", flexWrap:"wrap", gap:"10px", marginTop:16 }}>
-          {Object.entries(LAYER_LABELS).map(([key, val]) => (
-            <div key={key}
-              onMouseEnter={()=>setHoveredLayer(key)}
-              onMouseLeave={()=>setHoveredLayer(null)}
-              style={{
-                display:"flex", alignItems:"center", gap:6,
-                background: hoveredLayer===key ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.03)",
-                border: `1px solid ${val.color}40`,
-                borderRadius:6, padding:"4px 10px",
-                cursor:"default", transition:"all 0.2s",
-              }}>
-              <div style={{ width:8, height:8, borderRadius:2, background:val.color }} />
-              <span style={{ fontSize:10, color: val.color, letterSpacing:"0.08em", fontWeight:600 }}>{val.label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+Authentication: System checks if the User ID exists in the Airtable: Verified table.
 
-      <div style={{ display:"flex", gap:0, height:"calc(100vh - 130px)" }}>
-        {/* Main SVG Map */}
-        <div style={{ flex:1, overflow:"auto", padding:"24px 20px 20px 20px" }}>
-          <svg
-            viewBox={`${minX} ${minY} ${maxX - minX} ${maxY - minY}`}
-            width="100%"
-            style={{ display:"block", minWidth:900 }}
-          >
-            <defs>
-              {Object.entries(LAYER_LABELS).map(([key,val]) => (
-                <marker key={key} id={`arrow-${key}`} markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-                  <path d="M0,0 L0,6 L8,3 z" fill={val.color+"80"} />
-                </marker>
-              ))}
-              <filter id="glow">
-                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-                <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
-              </filter>
-            </defs>
+Processing:
 
-            {/* Edges */}
-            {edges.map((e,i) => {
-              const from = nodes[e.from];
-              const to = nodes[e.to];
-              if (!from || !to) return null;
-              const fc = getCenter(from);
-              const tc = getCenter(to);
-              const isActive = active && (e.from === active || e.to === active);
-              const fromLayer = from.layer;
-              const color = LAYER_LABELS[fromLayer]?.color || "#64748B";
-              const midX = (fc.cx + tc.cx) / 2;
-              const midY = (fc.cy + tc.cy) / 2;
-              return (
-                <g key={i}>
-                  <line
-                    x1={fc.cx} y1={fc.cy} x2={tc.cx} y2={tc.cy}
-                    stroke={isActive ? color : color+"40"}
-                    strokeWidth={isActive ? 2 : 1}
-                    strokeDasharray={isActive ? "none" : "4,3"}
-                    filter={isActive ? "url(#glow)" : "none"}
-                    style={{transition:"all 0.3s"}}
-                  />
-                  {isActive && (
-                    <circle cx={midX} cy={midY} r={3} fill={color} filter="url(#glow)" />
-                  )}
-                </g>
-              );
-            })}
+If Voice: Routed to STT → Text Query.
 
-            {/* Nodes */}
-            {Object.values(nodes).map(node => {
-              const isSelected = active === node.id;
-              const isLayerHighlighted = hoveredLayer === node.layer;
-              const layerColor = LAYER_LABELS[node.layer]?.color || node.color;
-              const opacity = hoveredLayer && !isLayerHighlighted ? 0.3 : 1;
+If Photo: Routed to OCR → Drug Extraction.
 
-              return (
-                <g key={node.id}
-                  transform={`translate(${node.x}, ${node.y})`}
-                  style={{ cursor:"pointer", transition:"opacity 0.2s", opacity }}
-                  onClick={() => setActive(active === node.id ? null : node.id)}
-                >
-                  {/* Glow bg when selected */}
-                  {isSelected && (
-                    <rect
-                      x={-4} y={-4} width={NW+8} height={NH+8}
-                      rx={12} fill={layerColor+"20"}
-                      filter="url(#glow)"
-                    />
-                  )}
-                  {/* Card */}
-                  <rect
-                    x={0} y={0} width={NW} height={NH} rx={8}
-                    fill={isSelected ? "#1E293B" : "#0F172A"}
-                    stroke={isSelected ? layerColor : layerColor+"50"}
-                    strokeWidth={isSelected ? 2 : 1}
-                  />
-                  {/* Left accent bar */}
-                  <rect x={0} y={0} width={3} height={NH} rx={2} fill={layerColor} />
-                  {/* Label */}
-                  <text x={12} y={20} fontSize={10} fontWeight={700} fill={isSelected ? layerColor : "#E2E8F0"}
-                    fontFamily="IBM Plex Mono, monospace">
-                    {node.label}
-                  </text>
-                  <text x={12} y={35} fontSize={8.5} fill="#64748B" fontFamily="IBM Plex Mono, monospace">
-                    {node.sublabel}
-                  </text>
-                </g>
-              );
-            })}
-          </svg>
-        </div>
+Clinical Lookup: The extracted drug name is checked against the Interaction Engine.
 
-        {/* Info Panel */}
-        <div style={{
-          width: activeNode ? 320 : 0,
-          minWidth: activeNode ? 320 : 0,
-          overflow:"hidden",
-          transition:"all 0.3s ease",
-          borderLeft: activeNode ? "1px solid rgba(99,102,241,0.3)" : "none",
-          background:"rgba(15,23,42,0.95)",
-          display:"flex", flexDirection:"column",
-        }}>
-          {activeNode && (
-            <div style={{ padding:"28px 24px", flex:1, overflow:"auto" }}>
-              <div style={{
-                display:"inline-flex", alignItems:"center", gap:8,
-                background: LAYER_LABELS[activeNode.layer]?.color + "15",
-                border: `1px solid ${LAYER_LABELS[activeNode.layer]?.color}40`,
-                borderRadius:6, padding:"4px 10px", marginBottom:16,
-              }}>
-                <div style={{ width:7, height:7, borderRadius:2, background:LAYER_LABELS[activeNode.layer]?.color }} />
-                <span style={{ fontSize:10, color:LAYER_LABELS[activeNode.layer]?.color, letterSpacing:"0.1em", fontWeight:700 }}>
-                  {LAYER_LABELS[activeNode.layer]?.label}
-                </span>
-              </div>
+Response: A structured analysis (Accuracy & Speed focus) is sent back to the Telegram UI.
 
-              <div style={{ fontSize:16, fontWeight:700, color:"#F1F5F9", marginBottom:8, lineHeight:1.4 }}>
-                {activeNode.label}
-              </div>
-              <div style={{ fontSize:11, color:"#64748B", marginBottom:20, letterSpacing:"0.03em" }}>
-                {activeNode.sublabel}
-              </div>
+Telemetry: The transaction (without patient data) is logged for the 7-day performance report.
 
-              <div style={{
-                fontSize:12.5, color:"#94A3B8", lineHeight:1.7,
-                background:"rgba(255,255,255,0.03)",
-                border:"1px solid rgba(255,255,255,0.06)",
-                borderRadius:8, padding:"16px",
-              }}>
-                {activeNode.desc}
-              </div>
+4. Security & Compliance (Non-Negotiable)
+Data Minimization: No storage of patient-identifiable information (PII) during the beta.
 
-              {/* Connected nodes */}
-              <div style={{ marginTop:24 }}>
-                <div style={{ fontSize:10, color:"#475569", letterSpacing:"0.1em", fontWeight:700, marginBottom:10 }}>CONNECTED TO</div>
-                {edges.filter(e => e.from===activeNode.id || e.to===activeNode.id).map((e,i) => {
-                  const otherId = e.from===activeNode.id ? e.to : e.from;
-                  const other = nodes[otherId];
-                  const isFrom = e.from===activeNode.id;
-                  if (!other) return null;
-                  return (
-                    <div key={i}
-                      onClick={() => setActive(otherId)}
-                      style={{
-                        display:"flex", alignItems:"center", gap:10,
-                        padding:"8px 12px", marginBottom:4,
-                        background:"rgba(255,255,255,0.03)",
-                        border:`1px solid ${LAYER_LABELS[other.layer]?.color}25`,
-                        borderRadius:6, cursor:"pointer",
-                        transition:"all 0.2s",
-                      }}
-                      onMouseEnter={e2=>e2.currentTarget.style.background="rgba(255,255,255,0.07)"}
-                      onMouseLeave={e2=>e2.currentTarget.style.background="rgba(255,255,255,0.03)"}
-                    >
-                      <span style={{ fontSize:10, color: LAYER_LABELS[other.layer]?.color }}>
-                        {isFrom ? "→" : "←"}
-                      </span>
-                      <span style={{ fontSize:11, color:"#CBD5E1" }}>{other.label}</span>
-                    </div>
-                  );
-                })}
-              </div>
+Encrypted Transport: All data between Telegram, n8n, and Airtable is transmitted via HTTPS/TLS 1.2+.
 
-              <button
-                onClick={() => setActive(null)}
-                style={{
-                  marginTop:24, width:"100%", padding:"10px",
-                  background:"rgba(255,255,255,0.04)",
-                  border:"1px solid rgba(255,255,255,0.1)",
-                  borderRadius:8, color:"#64748B", fontSize:12,
-                  cursor:"pointer", fontFamily:"inherit",
-                }}>
-                ✕ Close
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
+Access Control: Use of environment variables in n8n for API keys and credentials to prevent exposure.
 
-      {/* Bottom timing bar */}
-      <div style={{
-        position:"fixed", bottom:0, left:0, right:0,
-        background:"rgba(10,15,30,0.95)",
-        borderTop:"1px solid rgba(99,102,241,0.2)",
-        padding:"10px 40px",
-        display:"flex", alignItems:"center", gap:0,
-        fontSize:10, letterSpacing:"0.06em",
-      }}>
-        <span style={{color:"#475569",marginRight:16}}>PIPELINE TIMING TARGET:</span>
-        {[
-          {label:"Upload + Pre-process",time:"0.5s",color:"#10B981"},
-          {label:"OCR Extraction",time:"1.0–1.5s",color:"#F59E0B"},
-          {label:"NLP Parse",time:"0.3–0.5s",color:"#F59E0B"},
-          {label:"DB Queries (parallel)",time:"0.8–1.2s",color:"#EF4444"},
-          {label:"LLM Synthesis",time:"1.0–1.5s",color:"#6366F1"},
-          {label:"TOTAL",time:"< 5 seconds",color:"#22C55E"},
-        ].map((s,i) => (
-          <div key={i} style={{display:"flex",alignItems:"center",gap:0}}>
-            {i>0 && <span style={{color:"#1E293B",margin:"0 8px",fontSize:14}}>+</span>}
-            <div style={{
-              background:`${s.color}15`,
-              border:`1px solid ${s.color}40`,
-              borderRadius:5, padding:"4px 10px",
-              fontWeight: s.label==="TOTAL" ? 700 : 400,
-            }}>
-              <span style={{color:"#64748B"}}>{s.label}: </span>
-              <span style={{color:s.color}}>{s.time}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+5. Deployment Environment
+Platform: n8n Cloud (Production Instance).
+
+Integrations: Gmail API (SMTP), Telegram Bot API, Airtable API.
